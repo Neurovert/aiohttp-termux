@@ -914,14 +914,18 @@ class CookieMixin:
     # slot themselves.
     __slots__ = ()
 
+    _cookies: Optional[SimpleCookie]
+
     def __init__(self) -> None:
         super().__init__()
         # Mypy doesn't like that _cookies isn't in __slots__.
         # See the comment on this class's __slots__ for why this is OK.
-        self._cookies = SimpleCookie()  # type: ignore[misc]
+        self._cookies = None
 
     @property
     def cookies(self) -> SimpleCookie:
+        if self._cookies is None:
+            self._cookies = SimpleCookie()
         return self._cookies
 
     def set_cookie(
@@ -942,6 +946,8 @@ class CookieMixin:
         Sets new cookie or updates existent with new value.
         Also updates only those params which are not None.
         """
+        if self._cookies is None:
+            self._cookies = SimpleCookie()
         old = self._cookies.get(name)
         if old is not None and old.coded_value == "":
             # deleted cookie
@@ -996,6 +1002,8 @@ class CookieMixin:
         Creates new empty expired cookie.
         """
         # TODO: do we need domain/path here?
+        if self._cookies is None:
+            return
         self._cookies.pop(name, None)
         self.set_cookie(
             name,

@@ -383,7 +383,8 @@ class StreamResponse(BaseClass, HeadersMixin, CookieMixin):
         version = request.version
 
         headers = self._headers
-        populate_with_cookies(headers, self.cookies)
+        if self._cookies:
+            populate_with_cookies(headers, self._cookies)
 
         if self._compression:
             await self._start_compression(request)
