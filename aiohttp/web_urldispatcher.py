@@ -371,13 +371,15 @@ class Resource(AbstractResource):
         assert isinstance(
             route, ResourceRoute
         ), f"Instance of Route class is required, got {route!r}"
-        self._routes[route.method] = route
-        self._allowed_methods.add(route.method)
+        method = route.method
+        self._routes[method] = route
+        self._allowed_methods.add(method)
 
     async def resolve(self, request: Request) -> _Resolve:
         if not (match_dict := self._match(request.rel_url.path_safe)):
             return None, set()
-        if (method := request.method) in self._routes:
+        method = request.method
+        if method in self._routes:
             return (
                 UrlMappingMatchInfo(match_dict, self._routes[method]),
                 self._allowed_methods,
