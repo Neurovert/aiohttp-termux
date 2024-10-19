@@ -376,7 +376,7 @@ class Resource(AbstractResource):
         self._allowed_methods.add(method)
 
     async def resolve(self, request: Request) -> _Resolve:
-        if not (match_dict := self._match(request.rel_url.path_safe)):
+        if (match_dict := self._match(request.rel_url.path_safe)) is None:
             return None, set()
         method = request.method
         if method in self._routes:
