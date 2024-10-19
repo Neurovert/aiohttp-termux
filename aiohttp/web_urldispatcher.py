@@ -358,8 +358,8 @@ class Resource(AbstractResource):
         if existing := self._routes.get(method, self._routes.get(hdrs.METH_ANY)):
             raise RuntimeError(
                 "Added route will never be executed, "
-                "method {route.method} is already "
-                "registered".format(route=existing)
+                f"method {existing.method} is already "
+                "registered"
             )
 
         route_obj = ResourceRoute(method, handler, self, expect_handler=expect_handler)
