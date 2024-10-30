@@ -1372,7 +1372,7 @@ class ClientSession:
     @property
     def trace_configs(self) -> List[TraceConfig]:
         """A list of TraceConfig instances used for client tracing"""
-        return self._trace_configs
+        return self._trace_configs or []
 
     def detach(self) -> None:
         """Detach connector from session without closing the former.
