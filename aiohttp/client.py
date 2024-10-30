@@ -365,9 +365,10 @@ class ClientSession:
         self._response_class = response_class
         self._ws_response_class = ws_response_class
 
-        self._trace_configs = trace_configs or []
-        for trace_config in self._trace_configs:
-            trace_config.freeze()
+        self._trace_configs = trace_configs
+        if trace_configs:
+            for trace_config in trace_configs:
+                trace_config.freeze()
 
         self._resolve_charset = fallback_charset_resolver
 
@@ -530,17 +531,23 @@ class ClientSession:
         if max_field_size is None:
             max_field_size = self._max_field_size
 
-        traces = [
-            Trace(
-                self,
-                trace_config,
-                trace_config.trace_config_ctx(trace_request_ctx=trace_request_ctx),
-            )
-            for trace_config in self._trace_configs
-        ]
+        traces: Optional[List[Trace]]
+        if self._trace_configs:
+            traces = [
+                Trace(
+                    self,
+                    trace_config,
+                    trace_config.trace_config_ctx(trace_request_ctx=trace_request_ctx),
+                )
+                for trace_config in self._trace_configs
+            ]
 
-        for trace in traces:
-            await trace.send_request_start(method, url.update_query(params), headers)
+            for trace in traces:
+                await trace.send_request_start(
+                    method, url.update_query(params), headers
+                )
+        else:
+            traces = None
 
         timer = tm.timer()
         try:
@@ -689,10 +696,11 @@ class ClientSession:
 
                     # redirects
                     if resp.status in (301, 302, 303, 307, 308) and allow_redirects:
-                        for trace in traces:
-                            await trace.send_request_redirect(
-                                method, url.update_query(params), headers, resp
-                            )
+                        if traces:
+                            for trace in traces:
+                                await trace.send_request_redirect(
+                                    method, url.update_query(params), headers, resp
+                                )
 
                         redirects += 1
                         history.append(resp)
@@ -788,10 +796,11 @@ class ClientSession:
 
             resp._history = tuple(history)
 
-            for trace in traces:
-                await trace.send_request_end(
-                    method, url.update_query(params), headers, resp
-                )
+            if traces:
+                for trace in traces:
+                    await trace.send_request_end(
+                        method, url.update_query(params), headers, resp
+                    )
             return resp
 
         except BaseException as e:
@@ -801,10 +810,11 @@ class ClientSession:
                 handle.cancel()
                 handle = None
 
-            for trace in traces:
-                await trace.send_request_exception(
-                    method, url.update_query(params), headers, e
-                )
+            if traces:
+                for trace in traces:
+                    await trace.send_request_exception(
+                        method, url.update_query(params), headers, e
+                    )
             raise
 
     def ws_connect(
