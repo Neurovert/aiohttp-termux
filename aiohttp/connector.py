@@ -1439,7 +1439,10 @@ class UnixConnector(BaseConnector):
         return self._path
 
     async def _create_connection(
-        self, req: ClientRequest, traces: List["Trace"], timeout: "ClientTimeout"
+        self,
+        req: ClientRequest,
+        traces: Optional[List["Trace"]],
+        timeout: "ClientTimeout",
     ) -> ResponseHandler:
         try:
             async with ceil_timeout(
@@ -1501,7 +1504,10 @@ class NamedPipeConnector(BaseConnector):
         return self._path
 
     async def _create_connection(
-        self, req: ClientRequest, traces: List["Trace"], timeout: "ClientTimeout"
+        self,
+        req: ClientRequest,
+        traces: Optional[List["Trace"]],
+        timeout: "ClientTimeout",
     ) -> ResponseHandler:
         try:
             async with ceil_timeout(
