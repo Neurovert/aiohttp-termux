@@ -32,7 +32,7 @@ cdef inline void _release_writer(Writer* writer):
         PyMem_Free(writer.buf)
 
 
-cdef inline int _write_byte(Writer* writer, uint8_t ch):
+cdef inline int _write_byte(Writer* writer, uint8_t ch) noexcept:
     cdef char * buf
     cdef Py_ssize_t size
 
@@ -42,13 +42,11 @@ cdef inline int _write_byte(Writer* writer, uint8_t ch):
         if writer.buf == BUFFER:
             buf = <char*>PyMem_Malloc(size)
             if buf == NULL:
-                PyErr_NoMemory()
                 return -1
             memcpy(buf, writer.buf, writer.size)
         else:
             buf = <char*>PyMem_Realloc(writer.buf, size)
             if buf == NULL:
-                PyErr_NoMemory()
                 return -1
         writer.buf = buf
         writer.size = size
@@ -57,7 +55,7 @@ cdef inline int _write_byte(Writer* writer, uint8_t ch):
     return 0
 
 
-cdef inline int _write_utf8(Writer* writer, Py_UCS4 symbol):
+cdef inline int _write_utf8(Writer* writer, Py_UCS4 symbol) noexcept:
     cdef uint64_t utf = <uint64_t> symbol
 
     if utf < 0x80:
@@ -90,7 +88,7 @@ cdef inline int _write_utf8(Writer* writer, Py_UCS4 symbol):
         return _write_byte(writer, <uint8_t>(0x80 | (utf & 0x3f)))
 
 
-cdef inline int _write_str(Writer* writer, str s):
+cdef inline int _write_str(Writer* writer, str s) noexcept:
     cdef Py_UCS4 ch
     for ch in s:
         if _write_utf8(writer, ch) < 0:
@@ -99,7 +97,7 @@ cdef inline int _write_str(Writer* writer, str s):
 
 # --------------- _serialize_headers ----------------------
 
-cdef str to_str(object s):
+cdef inline str to_str(object s):
     typ = type(s)
     if typ is str:
         return <str>s
@@ -111,13 +109,16 @@ cdef str to_str(object s):
         return str(s)
 
 
-cdef void _safe_header(str string) except *:
+cdef inline void _safe_header(str string) except *:
     if "\r" in string or "\n" in string:
         raise ValueError(
             "Newline or carriage return character detected in HTTP status message or "
             "header. This is a potential security issue."
         )
 
+cdef inline void _out_of_memory():
+    PyErr_NoMemory()
+    raise
 
 def _serialize_headers(str status_line, headers):
     cdef Writer writer
@@ -127,36 +128,35 @@ def _serialize_headers(str status_line, headers):
 
     _init_writer(&writer)
 
-    for key, val in headers.items():
-        _safe_header(to_str(key))
-        _safe_header(to_str(val))
-
     try:
         if _write_str(&writer, status_line) < 0:
-            raise
+            _out_of_memory()
         if _write_byte(&writer, b'\r') < 0:
-            raise
+            _out_of_memory()
         if _write_byte(&writer, b'\n') < 0:
-            raise
+            _out_of_memory()
 
         for key, val in headers.items():
+            _safe_header(to_str(key))
+            _safe_header(to_str(val))
+
             if _write_str(&writer, to_str(key)) < 0:
-                raise
+                _out_of_memory()
             if _write_byte(&writer, b':') < 0:
-                raise
+                _out_of_memory()
             if _write_byte(&writer, b' ') < 0:
-                raise
+                _out_of_memory()
             if _write_str(&writer, to_str(val)) < 0:
-                raise
+                _out_of_memory()
             if _write_byte(&writer, b'\r') < 0:
-                raise
+                _out_of_memory()
             if _write_byte(&writer, b'\n') < 0:
-                raise
+                _out_of_memory()
 
         if _write_byte(&writer, b'\r') < 0:
-            raise
+            _out_of_memory()
         if _write_byte(&writer, b'\n') < 0:
-            raise
+            _out_of_memory()
 
         return PyBytes_FromStringAndSize(writer.buf, writer.pos)
     finally:
