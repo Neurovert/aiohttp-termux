@@ -1,6 +1,16 @@
 # Python aiohttp package for Termux (Android)
 
-This is a workaround for the `Could not contact DNS servers` error stemming from `c-ares` incompatibility with Android.
+### DISCLAIMER
+
+This is a **workaround**. I assume the real fix should happen directly in `c-ares`, but this was way faster and enough for my home assistant purposes.
+
+Changes were made in order to be able to support homeassistant-2024.9.3 python package on Android.
+
+If you want support for newer versions of HASS, you'd have to fix `uv` Python package support - currently it doesn't detect the interpreter correctly https://github.com/astral-sh/uv/issues/7373 https://github.com/astral-sh/uv/issues/2408
+
+### Purpose
+
+Version made as a workaround for the `Could not contact DNS servers` error stemming from `c-ares` incompatibility with Android.
 It also fixes the SSL errors like:
 
 ```
@@ -78,7 +88,3 @@ curl -L https://github.com/Neurovert/aiohttp-termux/commit/722abe0a9250a836feb98
 patch -p1 < fix.patch
 pip install .
 ```
-
-### Disclaimer
-
-As stated, this is a workaround. I assume the real fix should happen directly in `c-ares`, but this was way faster and enough for my home assistant purposes.
