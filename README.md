@@ -68,6 +68,17 @@ It also fixes the SSL errors like:
 DNS_SERVERS=1.1.1.1,8.8.8.8 hass
 ```
 
+# Installation on Termux
+
+```bash
+pip download aiohttp==3.10.5
+tar -xzf aiohttp-3.10.5.tar.gz
+cd aiohttp-3.10.5
+curl -L https://github.com/Neurovert/aiohttp-termux/commit/722abe0a9250a836feb985a9154fd458ff149df6.patch -o fix.patch
+patch -p1 < fix.patch
+pip install .
+```
+
 ### Disclaimer
 
 As stated, this is a workaround. I assume the real fix should happen directly in `c-ares`, but this was way faster and enough for my home assistant purposes.
