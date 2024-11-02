@@ -1,11 +1,30 @@
 import asyncio
 import socket
 import sys
+import os
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from .abc import AbstractResolver, ResolveResult
 
 __all__ = ("ThreadedResolver", "AsyncResolver", "DefaultResolver")
+
+
+def is_termux() -> bool:
+    """Check if we're running in Termux environment."""
+    return bool(os.environ.get("TERMUX_VERSION"))
+
+
+def get_nameservers() -> List[str]:
+    """Get nameservers from DNS_SERVERS environment variable or return Cloudflare and Google defaults."""
+    # Only modify DNS servers if running in Termux
+    if not is_termux():
+        return []  # Empty list means use system defaults
+
+    DEFAULT_NAMESERVERS = ["1.1.1.1", "8.8.8.8"]
+    env_servers = os.environ.get("DNS_SERVERS")
+    if env_servers:
+        return [s.strip() for s in env_servers.split(",")]
+    return DEFAULT_NAMESERVERS
 
 
 try:
@@ -15,7 +34,6 @@ try:
 except ImportError:  # pragma: no cover
     aiodns = None  # type: ignore[assignment]
     aiodns_default = False
-
 
 _NUMERIC_SOCKET_FLAGS = socket.AI_NUMERICHOST | socket.AI_NUMERICSERV
 _SUPPORTS_SCOPE_ID = sys.version_info >= (3, 9, 0)
@@ -91,7 +109,12 @@ class AsyncResolver(AbstractResolver):
         if aiodns is None:
             raise RuntimeError("Resolver requires aiodns library")
 
-        self._resolver = aiodns.DNSResolver(*args, **kwargs)
+        # Get nameservers only if in Termux
+        nameservers = get_nameservers()
+        if nameservers:  # Only set nameservers if we got a non-empty list
+            kwargs["nameservers"] = nameservers
+
+        self._resolver = aiodns.DNSResolver(*args, loop=loop, **kwargs)
 
         if not hasattr(self._resolver, "gethostbyname"):
             # aiodns 1.1 is not available, fallback to DNSResolver.query
