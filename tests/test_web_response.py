@@ -3,6 +3,7 @@ import datetime
 import gzip
 import io
 import json
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncIterator, Optional
 from unittest import mock
@@ -461,7 +462,7 @@ async def test_compression_default_coding() -> None:
 
     msg = await resp.prepare(req)
 
-    msg.enable_compression.assert_called_with("deflate")
+    msg.enable_compression.assert_called_with("deflate", zlib.Z_DEFAULT_STRATEGY)
     assert "deflate" == resp.headers.get(hdrs.CONTENT_ENCODING)
     assert msg.filter is not None
 
@@ -476,7 +477,7 @@ async def test_force_compression_deflate() -> None:
     assert resp.compression
 
     msg = await resp.prepare(req)
-    msg.enable_compression.assert_called_with("deflate")
+    msg.enable_compression.assert_called_with("deflate", zlib.Z_DEFAULT_STRATEGY)
     assert "deflate" == resp.headers.get(hdrs.CONTENT_ENCODING)
 
 
@@ -490,9 +491,10 @@ async def test_force_compression_deflate_large_payload() -> None:
     resp.enable_compression(ContentCoding.deflate)
     assert resp.compression
 
-    with pytest.warns(
-        Warning, match="Synchronous compression of large response bodies"
-    ), mock.patch("aiohttp.web_response.LARGE_BODY_SIZE", 2):
+    with (
+        pytest.warns(Warning, match="Synchronous compression of large response bodies"),
+        mock.patch("aiohttp.web_response.LARGE_BODY_SIZE", 2),
+    ):
         msg = await resp.prepare(req)
         assert msg is not None
     assert "deflate" == resp.headers.get(hdrs.CONTENT_ENCODING)
@@ -506,7 +508,7 @@ async def test_force_compression_no_accept_deflate() -> None:
     assert resp.compression
 
     msg = await resp.prepare(req)
-    msg.enable_compression.assert_called_with("deflate")
+    msg.enable_compression.assert_called_with("deflate", zlib.Z_DEFAULT_STRATEGY)
     assert "deflate" == resp.headers.get(hdrs.CONTENT_ENCODING)
 
 
@@ -520,7 +522,7 @@ async def test_force_compression_gzip() -> None:
     assert resp.compression
 
     msg = await resp.prepare(req)
-    msg.enable_compression.assert_called_with("gzip")
+    msg.enable_compression.assert_called_with("gzip", zlib.Z_DEFAULT_STRATEGY)
     assert "gzip" == resp.headers.get(hdrs.CONTENT_ENCODING)
 
 
@@ -532,7 +534,7 @@ async def test_force_compression_no_accept_gzip() -> None:
     assert resp.compression
 
     msg = await resp.prepare(req)
-    msg.enable_compression.assert_called_with("gzip")
+    msg.enable_compression.assert_called_with("gzip", zlib.Z_DEFAULT_STRATEGY)
     assert "gzip" == resp.headers.get(hdrs.CONTENT_ENCODING)
 
 
@@ -863,6 +865,10 @@ def test_response_cookies() -> None:
 
     resp.set_cookie("name", "value")
     assert str(resp.cookies) == "Set-Cookie: name=value; Path=/"
+    resp.set_cookie("name", "")
+    assert str(resp.cookies) == 'Set-Cookie: name=""; Path=/'
+    resp.set_cookie("name", "value")
+    assert str(resp.cookies) == "Set-Cookie: name=value; Path=/"
     resp.set_cookie("name", "other_value")
     assert str(resp.cookies) == "Set-Cookie: name=other_value; Path=/"
 
@@ -878,6 +884,8 @@ def test_response_cookies() -> None:
         "expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Path=/"
     )
     assert Matches(expected) == str(resp.cookies)
+    resp.del_cookie("name")
+    assert str(resp.cookies) == Matches(expected)
 
     resp.set_cookie("name", "value", domain="local.host")
     expected = "Set-Cookie: name=value; Domain=local.host; Path=/"

@@ -273,7 +273,7 @@ async def test_close_timeout(loop, aiohttp_client) -> None:
     await asyncio.sleep(0.08)
     assert await aborted
 
-    assert elapsed < 0.25, "close() should have returned before " "at most 2x timeout."
+    assert elapsed < 0.25, "close() should have returned before at most 2x timeout."
 
     await ws.close()
 
@@ -376,7 +376,7 @@ async def test_close_op_code_from_client(loop: Any, aiohttp_client: Any) -> None
 
     ws: web.WebSocketResponse = await client.ws_connect("/", protocols=("eggs", "bar"))
 
-    await ws._writer._send_frame(b"", WSMsgType.CLOSE)
+    await ws._writer.send_frame(b"", WSMsgType.CLOSE)
 
     msg = await ws.receive()
     assert msg.type == WSMsgType.CLOSE
@@ -423,7 +423,7 @@ async def test_ping(loop, aiohttp_client) -> None:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
 
-        await ws.ping("data")
+        await ws.ping(b"data")
         await ws.receive()
         closed.set_result(None)
         return ws
@@ -460,7 +460,7 @@ async def aiohttp_client_ping(loop, aiohttp_client):
 
     ws = await client.ws_connect("/", autoping=False)
 
-    await ws.ping("data")
+    await ws.ping(b"data")
     msg = await ws.receive()
     assert msg.type == WSMsgType.PONG
     assert msg.data == b"data"
@@ -478,7 +478,7 @@ async def test_pong(loop, aiohttp_client) -> None:
 
         msg = await ws.receive()
         assert msg.type == WSMsgType.PING
-        await ws.pong("data")
+        await ws.pong(b"data")
 
         msg = await ws.receive()
         assert msg.type == WSMsgType.CLOSE
@@ -493,7 +493,7 @@ async def test_pong(loop, aiohttp_client) -> None:
 
     ws = await client.ws_connect("/", autoping=False)
 
-    await ws.ping("data")
+    await ws.ping(b"data")
     msg = await ws.receive()
     assert msg.type == WSMsgType.PONG
     assert msg.data == b"data"
@@ -738,15 +738,20 @@ async def test_heartbeat_connection_closed(
         # We patch write here to simulate a connection reset error
         # since if we closed the connection normally, the server would
         # would cancel the heartbeat task and we wouldn't get a ping
-        with mock.patch.object(
-            ws_server._req.transport, "write", side_effect=ConnectionResetError
-        ), mock.patch.object(
-            ws_server._writer, "ping", wraps=ws_server._writer.ping
-        ) as ping:
+        with (
+            mock.patch.object(
+                ws_server._req.transport, "write", side_effect=ConnectionResetError
+            ),
+            mock.patch.object(
+                ws_server._writer, "send_frame", wraps=ws_server._writer.send_frame
+            ) as send_frame,
+        ):
             try:
                 await ws_server.receive()
             finally:
-                ping_count = ping.call_count
+                ping_count = send_frame.call_args_list.count(
+                    mock.call(b"", WSMsgType.PING)
+                )
         assert False
 
     app = web.Application()
@@ -947,11 +952,54 @@ async def test_websocket_disable_keepalive(loop, aiohttp_client) -> None:
     assert data == "OK"
 
 
-async def test_bug3380(loop, aiohttp_client) -> None:
+async def test_receive_str_nonstring(
+    loop: asyncio.AbstractEventLoop, aiohttp_client: AiohttpClient
+) -> None:
+    async def handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        assert ws.can_prepare(request)
+
+        await ws.prepare(request)
+        await ws.send_bytes(b"answer")
+        await ws.close()
+        return ws
+
+    app = web.Application()
+    app.router.add_route("GET", "/", handler)
+    client = await aiohttp_client(app)
+
+    ws = await client.ws_connect("/")
+    with pytest.raises(TypeError):
+        await ws.receive_str()
+
+
+async def test_receive_bytes_nonbytes(
+    loop: asyncio.AbstractEventLoop, aiohttp_client: AiohttpClient
+) -> None:
+    async def handler(request: web.Request) -> NoReturn:
+        ws = web.WebSocketResponse()
+        assert ws.can_prepare(request)
+
+        await ws.prepare(request)
+        await ws.send_str("answer")
+        assert False
+
+    app = web.Application()
+    app.router.add_route("GET", "/", handler)
+    client = await aiohttp_client(app)
+
+    ws = await client.ws_connect("/")
+    with pytest.raises(TypeError):
+        await ws.receive_bytes()
+
+
+async def test_bug3380(
+    loop: asyncio.AbstractEventLoop, aiohttp_client: AiohttpClient
+) -> None:
     async def handle_null(request):
         return aiohttp.web.json_response({"err": None})
 
-    async def ws_handler(request):
+    async def ws_handler(request: web.Request) -> web.Response:
         return web.Response(status=401)
 
     app = web.Application()
@@ -990,7 +1038,7 @@ async def test_receive_being_cancelled_keeps_connection_open(
         msg = await ws.receive()
         assert msg.type == WSMsgType.PING
         await asyncio.sleep(0)
-        await ws.pong("data")
+        await ws.pong(b"data")
 
         msg = await ws.receive()
         assert msg.type == WSMsgType.CLOSE
@@ -1006,7 +1054,7 @@ async def test_receive_being_cancelled_keeps_connection_open(
     ws = await client.ws_connect("/", autoping=False)
 
     await asyncio.sleep(0)
-    await ws.ping("data")
+    await ws.ping(b"data")
 
     msg = await ws.receive()
     assert msg.type == WSMsgType.PONG
@@ -1036,7 +1084,7 @@ async def test_receive_timeout_keeps_connection_open(
         msg = await ws.receive()
         assert msg.type == WSMsgType.PING
         await asyncio.sleep(0)
-        await ws.pong("data")
+        await ws.pong(b"data")
 
         msg = await ws.receive()
         assert msg.type == WSMsgType.CLOSE
@@ -1052,7 +1100,7 @@ async def test_receive_timeout_keeps_connection_open(
     ws = await client.ws_connect("/", autoping=False)
 
     await timed_out
-    await ws.ping("data")
+    await ws.ping(b"data")
 
     msg = await ws.receive()
     assert msg.type == WSMsgType.PONG

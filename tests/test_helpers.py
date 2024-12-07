@@ -2,7 +2,6 @@ import asyncio
 import base64
 import datetime
 import gc
-import platform
 import sys
 import weakref
 from math import ceil, modf
@@ -16,14 +15,11 @@ from yarl import URL
 
 from aiohttp import helpers
 from aiohttp.helpers import (
-    method_must_be_empty_body,
+    EMPTY_BODY_METHODS,
     must_be_empty_body,
     parse_http_date,
     should_remove_content_length,
 )
-
-IS_PYPY = platform.python_implementation() == "PyPy"
-
 
 # ------------------- parse_mimetype ----------------------------------
 
@@ -208,59 +204,6 @@ def test_basic_auth_from_not_url() -> None:
         helpers.BasicAuth.from_url("http://user:pass@example.com")
 
 
-class ReifyMixin:
-    reify = NotImplemented
-
-    def test_reify(self) -> None:
-        class A:
-            def __init__(self):
-                self._cache = {}
-
-            @self.reify
-            def prop(self):
-                return 1
-
-        a = A()
-        assert 1 == a.prop
-
-    def test_reify_class(self) -> None:
-        class A:
-            def __init__(self):
-                self._cache = {}
-
-            @self.reify
-            def prop(self):
-                """Docstring."""
-                return 1
-
-        assert isinstance(A.prop, self.reify)
-        assert "Docstring." == A.prop.__doc__
-
-    def test_reify_assignment(self) -> None:
-        class A:
-            def __init__(self):
-                self._cache = {}
-
-            @self.reify
-            def prop(self):
-                return 1
-
-        a = A()
-
-        with pytest.raises(AttributeError):
-            a.prop = 123
-
-
-class TestPyReify(ReifyMixin):
-    reify = helpers.reify_py
-
-
-if not helpers.NO_EXTENSIONS and not IS_PYPY and hasattr(helpers, "reify_c"):
-
-    class TestCReify(ReifyMixin):
-        reify = helpers.reify_c
-
-
 # ----------------------------------- is_ip_address() ----------------------
 
 
@@ -274,16 +217,6 @@ def test_is_ip_address() -> None:
     assert not helpers.is_ip_address("www.example.com")
 
 
-def test_is_ip_address_bytes() -> None:
-    assert helpers.is_ip_address(b"127.0.0.1")
-    assert helpers.is_ip_address(b"::1")
-    assert helpers.is_ip_address(b"FE80:0000:0000:0000:0202:B3FF:FE1E:8329")
-
-    # Hostnames
-    assert not helpers.is_ip_address(b"localhost")
-    assert not helpers.is_ip_address(b"www.example.com")
-
-
 def test_ipv4_addresses() -> None:
     ip_addresses = [
         "0.0.0.0",
@@ -291,8 +224,6 @@ def test_ipv4_addresses() -> None:
         "255.255.255.255",
     ]
     for address in ip_addresses:
-        assert helpers.is_ipv4_address(address)
-        assert not helpers.is_ipv6_address(address)
         assert helpers.is_ip_address(address)
 
 
@@ -308,14 +239,13 @@ def test_ipv6_addresses() -> None:
         "1::1",
     ]
     for address in ip_addresses:
-        assert not helpers.is_ipv4_address(address)
-        assert helpers.is_ipv6_address(address)
         assert helpers.is_ip_address(address)
 
 
 def test_host_addresses() -> None:
     hosts = [
-        "www.four.part.host" "www.python.org",
+        "www.four.part.host",
+        "www.python.org",
         "foo.bar",
         "localhost",
     ]
@@ -329,18 +259,6 @@ def test_is_ip_address_invalid_type() -> None:
 
     with pytest.raises(TypeError):
         helpers.is_ip_address(object())
-
-    with pytest.raises(TypeError):
-        helpers.is_ipv4_address(123)  # type: ignore[arg-type]
-
-    with pytest.raises(TypeError):
-        helpers.is_ipv4_address(object())  # type: ignore[arg-type]
-
-    with pytest.raises(TypeError):
-        helpers.is_ipv6_address(123)  # type: ignore[arg-type]
-
-    with pytest.raises(TypeError):
-        helpers.is_ipv6_address(object())  # type: ignore[arg-type]
 
 
 # ----------------------------------- TimeoutHandle -------------------
@@ -979,9 +897,9 @@ def test_read_basicauth_from_empty_netrc():
 
 def test_method_must_be_empty_body():
     """Test that HEAD is the only method that unequivocally must have an empty body."""
-    assert method_must_be_empty_body("HEAD") is True
+    assert "HEAD" in EMPTY_BODY_METHODS
     # CONNECT is only empty on a successful response
-    assert method_must_be_empty_body("CONNECT") is False
+    assert "CONNECT" not in EMPTY_BODY_METHODS
 
 
 def test_should_remove_content_length_is_subset_of_must_be_empty_body():

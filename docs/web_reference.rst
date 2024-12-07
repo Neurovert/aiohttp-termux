@@ -669,7 +669,7 @@ and :ref:`aiohttp-web-signals` handlers::
 
       .. seealso:: :meth:`enable_compression`
 
-   .. method:: enable_compression(force=None)
+   .. method:: enable_compression(force=None, strategy=zlib.Z_DEFAULT_STRATEGY)
 
       Enable compression.
 
@@ -678,6 +678,9 @@ and :ref:`aiohttp-web-signals` handlers::
 
       *Accept-Encoding* is not checked if *force* is set to a
       :class:`ContentCoding`.
+
+      *strategy* accepts a :mod:`zlib` compression strategy.
+      See :func:`zlib.compressobj` for possible values.
 
       .. seealso:: :attr:`compression`
 
@@ -951,7 +954,8 @@ and :ref:`aiohttp-web-signals` handlers::
 
 .. class:: WebSocketResponse(*, timeout=10.0, receive_timeout=None, \
                              autoclose=True, autoping=True, heartbeat=None, \
-                             protocols=(), compress=True, max_msg_size=4194304)
+                             protocols=(), compress=True, max_msg_size=4194304, \
+                             writer_limit=65536)
 
    Class for handling server-side websockets, inherited from
    :class:`StreamResponse`.
@@ -963,8 +967,8 @@ and :ref:`aiohttp-web-signals` handlers::
 
    To enable back-pressure from slow websocket clients treat methods
    :meth:`ping`, :meth:`pong`, :meth:`send_str`,
-   :meth:`send_bytes`, :meth:`send_json` as coroutines.  By
-   default write buffer size is set to 64k.
+   :meth:`send_bytes`, :meth:`send_json`, :meth:`send_frame` as coroutines.
+   By default write buffer size is set to 64k.
 
    :param bool autoping: Automatically send
                          :const:`~aiohttp.WSMsgType.PONG` on
@@ -1008,6 +1012,11 @@ and :ref:`aiohttp-web-signals` handlers::
                            ``request.transport.close()`` to avoid
                            leaking resources.
 
+   :param int writer_limit: maximum size of write buffer, 64 KB by default.
+                            Once the buffer is full, the websocket will pause
+                            to drain the buffer.
+
+      .. versionadded:: 3.11
 
    The class supports ``async for`` statement for iterating over
    incoming messages::
@@ -1184,6 +1193,32 @@ and :ref:`aiohttp-web-signals` handlers::
          The method is converted into :term:`coroutine`,
          *compress* parameter added.
 
+   .. method:: send_frame(message, opcode, compress=None)
+      :async:
+
+      Send a :const:`~aiohttp.WSMsgType` message *message* to peer.
+
+      This method is low-level and should be used with caution as it
+      only accepts bytes which must conform to the correct message type
+      for *message*.
+
+      It is recommended to use the :meth:`send_str`, :meth:`send_bytes`
+      or :meth:`send_json` methods instead of this method.
+
+      The primary use case for this method is to send bytes that are
+      have already been encoded without having to decode and
+      re-encode them.
+
+      :param bytes message: message to send.
+
+      :param ~aiohttp.WSMsgType opcode: opcode of the message.
+
+      :param int compress: sets specific level of compression for
+                           single message,
+                           ``None`` for not overriding per-socket setting.
+
+      .. versionadded:: 3.11
+
    .. method:: close(*, code=WSCloseCode.OK, message=b'', drain=True)
       :async:
 
@@ -1244,7 +1279,7 @@ and :ref:`aiohttp-web-signals` handlers::
 
       :return str: peer's message content.
 
-      :raise TypeError: if message is :const:`~aiohttp.WSMsgType.BINARY`.
+      :raise aiohttp.WSMessageTypeError: if message is not :const:`~aiohttp.WSMsgType.TEXT`.
 
    .. method:: receive_bytes(*, timeout=None)
       :async:
@@ -1263,7 +1298,7 @@ and :ref:`aiohttp-web-signals` handlers::
 
       :return bytes: peer's message content.
 
-      :raise TypeError: if message is :const:`~aiohttp.WSMsgType.TEXT`.
+      :raise aiohttp.WSMessageTypeError: if message is not :const:`~aiohttp.WSMsgType.BINARY`.
 
    .. method:: receive_json(*, loads=json.loads, timeout=None)
       :async:
@@ -2753,7 +2788,9 @@ application on specific TCP or Unix socket, e.g.::
 
    :param bool tcp_keepalive: Enable TCP Keep-Alive. Default: ``True``.
    :param int keepalive_timeout: Number of seconds before closing Keep-Alive
-        connection. Default: ``75`` seconds (NGINX's default value).
+        connection. Default: ``3630`` seconds (when deployed behind a reverse proxy
+        it's important for this value to be higher than the proxy's timeout. To avoid
+        race conditions we always want the proxy to close the connection).
    :param logger: Custom logger object. Default:
         :data:`aiohttp.log.server_logger`.
    :param access_log: Custom logging object. Default:
@@ -2988,7 +3025,7 @@ Utilities
 
 .. function:: run_app(app, *, host=None, port=None, path=None, \
                       sock=None, shutdown_timeout=60.0, \
-                      keepalive_timeout=75.0, \
+                      keepalive_timeout=3630, \
                       ssl_context=None, print=print, backlog=128, \
                       access_log_class=aiohttp.helpers.AccessLogger, \
                       access_log_format=aiohttp.helpers.AccessLogger.LOG_FORMAT, \
@@ -3054,6 +3091,12 @@ Utilities
    :param float keepalive_timeout: a delay before a TCP connection is
                                    closed after a HTTP request. The delay
                                    allows for reuse of a TCP connection.
+
+                                   When deployed behind a reverse proxy
+                                   it's important for this value to be
+                                   higher than the proxy's timeout. To avoid
+                                   race conditions, we always want the proxy
+                                   to handle connection closing.
 
       .. versionadded:: 3.8
 

@@ -51,9 +51,10 @@ async def test_ws_connect_read_timeout_is_reset_to_inf(
         hdrs.SEC_WEBSOCKET_PROTOCOL: "chat",
     }
     resp.connection.protocol.read_timeout = 0.5
-    with mock.patch("aiohttp.client.os") as m_os, mock.patch(
-        "aiohttp.client.ClientSession.request"
-    ) as m_req:
+    with (
+        mock.patch("aiohttp.client.os") as m_os,
+        mock.patch("aiohttp.client.ClientSession.request") as m_req,
+    ):
         m_os.urandom.return_value = key_data
         m_req.return_value = loop.create_future()
         m_req.return_value.set_result(resp)
@@ -80,9 +81,10 @@ async def test_ws_connect_read_timeout_stays_inf(
         hdrs.SEC_WEBSOCKET_PROTOCOL: "chat",
     }
     resp.connection.protocol.read_timeout = None
-    with mock.patch("aiohttp.client.os") as m_os, mock.patch(
-        "aiohttp.client.ClientSession.request"
-    ) as m_req:
+    with (
+        mock.patch("aiohttp.client.os") as m_os,
+        mock.patch("aiohttp.client.ClientSession.request") as m_req,
+    ):
         m_os.urandom.return_value = key_data
         m_req.return_value = loop.create_future()
         m_req.return_value.set_result(resp)
@@ -90,7 +92,7 @@ async def test_ws_connect_read_timeout_stays_inf(
         res = await aiohttp.ClientSession().ws_connect(
             "http://test.org",
             protocols=("t1", "t2", "chat"),
-            receive_timeout=0.5,
+            timeout=aiohttp.ClientWSTimeout(0.5),
         )
 
     assert isinstance(res, client.ClientWebSocketResponse)
@@ -111,9 +113,10 @@ async def test_ws_connect_read_timeout_reset_to_max(
         hdrs.SEC_WEBSOCKET_PROTOCOL: "chat",
     }
     resp.connection.protocol.read_timeout = 0.5
-    with mock.patch("aiohttp.client.os") as m_os, mock.patch(
-        "aiohttp.client.ClientSession.request"
-    ) as m_req:
+    with (
+        mock.patch("aiohttp.client.os") as m_os,
+        mock.patch("aiohttp.client.ClientSession.request") as m_req,
+    ):
         m_os.urandom.return_value = key_data
         m_req.return_value = loop.create_future()
         m_req.return_value.set_result(resp)
@@ -121,7 +124,7 @@ async def test_ws_connect_read_timeout_reset_to_max(
         res = await aiohttp.ClientSession().ws_connect(
             "http://test.org",
             protocols=("t1", "t2", "chat"),
-            receive_timeout=1.0,
+            timeout=aiohttp.ClientWSTimeout(1.0),
         )
 
     assert isinstance(res, client.ClientWebSocketResponse)
@@ -416,9 +419,11 @@ async def test_close_connection_lost(
         hdrs.SEC_WEBSOCKET_ACCEPT: ws_key,
     }
     mresp.connection.protocol.read_timeout = None
-    with mock.patch("aiohttp.client.WebSocketWriter"), mock.patch(
-        "aiohttp.client.os"
-    ) as m_os, mock.patch("aiohttp.client.ClientSession.request") as m_req:
+    with (
+        mock.patch("aiohttp.client.WebSocketWriter"),
+        mock.patch("aiohttp.client.os") as m_os,
+        mock.patch("aiohttp.client.ClientSession.request") as m_req,
+    ):
         m_os.urandom.return_value = key_data
         m_req.return_value = loop.create_future()
         m_req.return_value.set_result(mresp)
@@ -537,6 +542,7 @@ async def test_send_data_after_close(
                 (resp.send_str, ("s",)),
                 (resp.send_bytes, (b"b",)),
                 (resp.send_json, ({},)),
+                (resp.send_frame, (b"", aiohttp.WSMsgType.BINARY)),
             ):
                 with pytest.raises(exc):  # Verify exc can be caught with both classes
                     await meth(*args)
@@ -605,8 +611,9 @@ async def test_reader_read_exception(ws_key, key_data, loop) -> None:
 
 
 async def test_receive_runtime_err(loop) -> None:
+    timeout = aiohttp.ClientWSTimeout(ws_receive=10.0)
     resp = client.ClientWebSocketResponse(
-        mock.Mock(), mock.Mock(), mock.Mock(), mock.Mock(), 10.0, True, True, loop
+        mock.Mock(), mock.Mock(), mock.Mock(), mock.Mock(), timeout, True, True, loop
     )
     resp._waiting = True
 
@@ -724,19 +731,28 @@ async def test_ws_connect_deflate_per_message(loop, ws_key, key_data) -> None:
                 m_req.return_value = loop.create_future()
                 m_req.return_value.set_result(resp)
                 writer = WebSocketWriter.return_value = mock.Mock()
-                send = writer.send = make_mocked_coro()
+                send_frame = writer.send_frame = make_mocked_coro()
 
                 session = aiohttp.ClientSession(loop=loop)
                 resp = await session.ws_connect("http://test.org")
 
                 await resp.send_str("string", compress=-1)
-                send.assert_called_with("string", binary=False, compress=-1)
+                send_frame.assert_called_with(
+                    b"string", aiohttp.WSMsgType.TEXT, compress=-1
+                )
 
                 await resp.send_bytes(b"bytes", compress=15)
-                send.assert_called_with(b"bytes", binary=True, compress=15)
+                send_frame.assert_called_with(
+                    b"bytes", aiohttp.WSMsgType.BINARY, compress=15
+                )
 
                 await resp.send_json([{}], compress=-9)
-                send.assert_called_with("[{}]", binary=False, compress=-9)
+                send_frame.assert_called_with(
+                    b"[{}]", aiohttp.WSMsgType.TEXT, compress=-9
+                )
+
+                await resp.send_frame(b"[{}]", aiohttp.WSMsgType.TEXT, compress=-9)
+                send_frame.assert_called_with(b"[{}]", aiohttp.WSMsgType.TEXT, -9)
 
                 await session.close()
 

@@ -7,11 +7,12 @@ import aiosignal
 import pytest
 from multidict import CIMultiDict
 
-from aiohttp import WSMessage, WSMsgType
+from aiohttp import WSMessage, WSMessageTypeError, WSMsgType, web
+from aiohttp.http import WS_CLOSED_MESSAGE
 from aiohttp.streams import EofStream
 from aiohttp.test_utils import make_mocked_coro, make_mocked_request
 from aiohttp.web import HTTPBadRequest, WebSocketResponse
-from aiohttp.web_ws import WS_CLOSED_MESSAGE, WebSocketReady
+from aiohttp.web_ws import WebSocketReady
 
 
 @pytest.fixture
@@ -65,6 +66,12 @@ async def test_nonstarted_pong() -> None:
     ws = WebSocketResponse()
     with pytest.raises(RuntimeError):
         await ws.pong()
+
+
+async def test_nonstarted_send_frame() -> None:
+    ws = WebSocketResponse()
+    with pytest.raises(RuntimeError):
+        await ws.send_frame(b"string", WSMsgType.TEXT)
 
 
 async def test_nonstarted_send_str() -> None:
@@ -243,6 +250,18 @@ def test_closed_after_ctor() -> None:
     assert ws.close_code is None
 
 
+async def test_raise_writer_limit(make_request) -> None:
+    """Test the writer limit can be adjusted."""
+    req = make_request("GET", "/")
+    ws = WebSocketResponse(writer_limit=1234567)
+    await ws.prepare(req)
+    assert ws._reader is not None
+    assert ws._writer is not None
+    assert ws._writer._limit == 1234567
+    ws._reader.feed_data(WS_CLOSED_MESSAGE, 0)
+    await ws.close()
+
+
 async def test_send_str_closed(make_request) -> None:
     req = make_request("GET", "/")
     ws = WebSocketResponse()
@@ -253,6 +272,21 @@ async def test_send_str_closed(make_request) -> None:
 
     with pytest.raises(ConnectionError):
         await ws.send_str("string")
+
+
+async def test_recv_str_closed(make_request) -> None:
+    req = make_request("GET", "/")
+    ws = web.WebSocketResponse()
+    await ws.prepare(req)
+    assert ws._reader is not None
+    ws._reader.feed_data(WS_CLOSED_MESSAGE, 0)
+    await ws.close()
+
+    with pytest.raises(
+        WSMessageTypeError,
+        match=f"Received message {WSMsgType.CLOSED}:.+ is not WSMsgType.TEXT",
+    ):
+        await ws.receive_str()
 
 
 async def test_send_bytes_closed(make_request) -> None:
@@ -266,6 +300,21 @@ async def test_send_bytes_closed(make_request) -> None:
         await ws.send_bytes(b"bytes")
 
 
+async def test_recv_bytes_closed(make_request) -> None:
+    req = make_request("GET", "/")
+    ws = web.WebSocketResponse()
+    await ws.prepare(req)
+    assert ws._reader is not None
+    ws._reader.feed_data(WS_CLOSED_MESSAGE, 0)
+    await ws.close()
+
+    with pytest.raises(
+        WSMessageTypeError,
+        match=f"Received message {WSMsgType.CLOSED}:.+ is not WSMsgType.BINARY",
+    ):
+        await ws.receive_bytes()
+
+
 async def test_send_json_closed(make_request) -> None:
     req = make_request("GET", "/")
     ws = WebSocketResponse()
@@ -275,6 +324,18 @@ async def test_send_json_closed(make_request) -> None:
 
     with pytest.raises(ConnectionError):
         await ws.send_json({"type": "json"})
+
+
+async def test_send_frame_closed(make_request) -> None:
+    req = make_request("GET", "/")
+    ws = WebSocketResponse()
+    await ws.prepare(req)
+    assert ws._reader is not None
+    ws._reader.feed_data(WS_CLOSED_MESSAGE, 0)
+    await ws.close()
+
+    with pytest.raises(ConnectionError):
+        await ws.send_frame(b'{"type": "json"}', WSMsgType.TEXT)
 
 
 async def test_ping_closed(make_request) -> None:
@@ -536,16 +597,18 @@ async def test_send_with_per_message_deflate(make_request, mocker) -> None:
     req = make_request("GET", "/")
     ws = WebSocketResponse()
     await ws.prepare(req)
-    writer_send = ws._writer.send = make_mocked_coro()
+    with mock.patch.object(ws._writer, "send_frame", autospec=True, spec_set=True) as m:
+        await ws.send_str("string", compress=15)
+        m.assert_called_with(b"string", WSMsgType.TEXT, compress=15)
 
-    await ws.send_str("string", compress=15)
-    writer_send.assert_called_with("string", binary=False, compress=15)
+        await ws.send_bytes(b"bytes", compress=0)
+        m.assert_called_with(b"bytes", WSMsgType.BINARY, compress=0)
 
-    await ws.send_bytes(b"bytes", compress=0)
-    writer_send.assert_called_with(b"bytes", binary=True, compress=0)
+        await ws.send_json("[{}]", compress=9)
+        m.assert_called_with(b'"[{}]"', WSMsgType.TEXT, compress=9)
 
-    await ws.send_json("[{}]", compress=9)
-    writer_send.assert_called_with('"[{}]"', binary=False, compress=9)
+        await ws.send_frame(b"[{}]", WSMsgType.TEXT, compress=9)
+        m.assert_called_with(b"[{}]", WSMsgType.TEXT, compress=9)
 
 
 async def test_no_transfer_encoding_header(make_request, mocker) -> None:

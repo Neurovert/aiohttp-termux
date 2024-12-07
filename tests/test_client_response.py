@@ -1,5 +1,6 @@
 # Tests for aiohttp/client.py
 
+import asyncio
 import gc
 import sys
 from typing import Callable
@@ -10,7 +11,7 @@ from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
 import aiohttp
-from aiohttp import http
+from aiohttp import ClientSession, http
 from aiohttp.client_reqrep import ClientResponse, RequestInfo
 from aiohttp.helpers import TimerNoop
 from aiohttp.test_utils import make_mocked_coro
@@ -981,13 +982,31 @@ def test_content_disposition_no_header() -> None:
     assert response.content_disposition is None
 
 
+def test_default_encoding_is_utf8() -> None:
+    response = ClientResponse(
+        "get",
+        URL("http://def-cl-resp.org"),
+        request_info=mock.Mock(),
+        writer=WriterMock(),
+        continue100=None,
+        timer=TimerNoop(),
+        traces=[],
+        loop=mock.Mock(),
+        session=None,  # type: ignore[arg-type]
+    )
+    response._headers = CIMultiDictProxy(CIMultiDict({}))
+    response._body = b""
+
+    assert response.get_encoding() == "utf-8"
+
+
 def test_response_request_info() -> None:
     url = "http://def-cl-resp.org"
     headers = {"Content-Type": "application/json;charset=cp1251"}
     response = ClientResponse(
         "get",
         URL(url),
-        request_info=RequestInfo(url, "get", headers),
+        request_info=RequestInfo(url, "get", headers, url),
         writer=WriterMock(),
         continue100=None,
         timer=TimerNoop(),
@@ -1006,7 +1025,7 @@ def test_request_info_in_exception() -> None:
     response = ClientResponse(
         "get",
         URL(url),
-        request_info=RequestInfo(url, "get", headers),
+        request_info=RequestInfo(url, "get", headers, url),
         writer=WriterMock(),
         continue100=None,
         timer=TimerNoop(),
@@ -1027,7 +1046,7 @@ def test_no_redirect_history_in_exception() -> None:
     response = ClientResponse(
         "get",
         URL(url),
-        request_info=RequestInfo(url, "get", headers),
+        request_info=RequestInfo(url, "get", headers, url),
         writer=WriterMock(),
         continue100=None,
         timer=TimerNoop(),
@@ -1050,7 +1069,7 @@ def test_redirect_history_in_exception() -> None:
     response = ClientResponse(
         "get",
         URL(url),
-        request_info=RequestInfo(url, "get", headers),
+        request_info=RequestInfo(url, "get", headers, url),
         writer=WriterMock(),
         continue100=None,
         timer=TimerNoop(),
@@ -1064,7 +1083,7 @@ def test_redirect_history_in_exception() -> None:
     hist_response = ClientResponse(
         "get",
         URL(hist_url),
-        request_info=RequestInfo(url, "get", headers),
+        request_info=RequestInfo(url, "get", headers, url),
         writer=WriterMock(),
         continue100=None,
         timer=TimerNoop(),
@@ -1121,7 +1140,28 @@ async def test_response_read_triggers_callback(loop, session) -> None:
     )
 
 
-def test_response_real_url(loop, session) -> None:
+def test_response_cookies(
+    loop: asyncio.AbstractEventLoop, session: ClientSession
+) -> None:
+    response = ClientResponse(
+        "get",
+        URL("http://python.org"),
+        request_info=mock.Mock(),
+        writer=WriterMock(),
+        continue100=None,
+        timer=TimerNoop(),
+        traces=[],
+        loop=loop,
+        session=session,
+    )
+    cookies = response.cookies
+    # Ensure the same cookies object is returned each time
+    assert response.cookies is cookies
+
+
+def test_response_real_url(
+    loop: asyncio.AbstractEventLoop, session: ClientSession
+) -> None:
     url = URL("http://def-cl-resp.org/#urlfragment")
     response = ClientResponse(
         "get",

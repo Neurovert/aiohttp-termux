@@ -1,6 +1,7 @@
 import pathlib
 import re
 from collections.abc import Container, Iterable, Mapping, MutableMapping, Sized
+from typing import NoReturn
 from urllib.parse import quote, unquote
 
 import pytest
@@ -256,7 +257,13 @@ async def test_any_method(router) -> None:
     assert info1.route is info2.route
 
 
-async def test_match_second_result_in_table(router) -> None:
+async def test_any_method_appears_in_routes(router: web.UrlDispatcher) -> None:
+    handler = make_handler()
+    route = router.add_route(hdrs.METH_ANY, "/", handler)
+    assert route in router.routes()
+
+
+async def test_match_second_result_in_table(router: web.UrlDispatcher) -> None:
     handler1 = make_handler()
     handler2 = make_handler()
     router.add_route("GET", "/h1", handler1)
@@ -368,7 +375,7 @@ def test_add_static_append_version(router) -> None:
     resource = router.add_static("/st", pathlib.Path(__file__).parent, name="static")
     url = resource.url_for(filename="/data.unknown_mime_type", append_version=True)
     expect_url = (
-        "/st/data.unknown_mime_type?" "v=aUsn8CHEhhszc81d28QmlcBW0KQpfS2F4trgQKhOYd8%3D"
+        "/st/data.unknown_mime_type?v=aUsn8CHEhhszc81d28QmlcBW0KQpfS2F4trgQKhOYd8%3D"
     )
     assert expect_url == str(url)
 
@@ -379,7 +386,7 @@ def test_add_static_append_version_set_from_constructor(router) -> None:
     )
     url = resource.url_for(filename="/data.unknown_mime_type")
     expect_url = (
-        "/st/data.unknown_mime_type?" "v=aUsn8CHEhhszc81d28QmlcBW0KQpfS2F4trgQKhOYd8%3D"
+        "/st/data.unknown_mime_type?v=aUsn8CHEhhszc81d28QmlcBW0KQpfS2F4trgQKhOYd8%3D"
     )
     assert expect_url == str(url)
 
@@ -397,7 +404,7 @@ def test_add_static_append_version_filename_without_slash(router) -> None:
     resource = router.add_static("/st", pathlib.Path(__file__).parent, name="static")
     url = resource.url_for(filename="data.unknown_mime_type", append_version=True)
     expect_url = (
-        "/st/data.unknown_mime_type?" "v=aUsn8CHEhhszc81d28QmlcBW0KQpfS2F4trgQKhOYd8%3D"
+        "/st/data.unknown_mime_type?v=aUsn8CHEhhszc81d28QmlcBW0KQpfS2F4trgQKhOYd8%3D"
     )
     assert expect_url == str(url)
 
@@ -486,7 +493,43 @@ async def test_static_not_match(router) -> None:
     assert (None, set()) == ret
 
 
-def test_dynamic_with_trailing_slash(router) -> None:
+async def test_add_static_access_resources(router: web.UrlDispatcher) -> None:
+    """Test accessing resource._routes externally.
+
+    aiohttp-cors accesses the resource._routes, this test ensures that this
+    continues to work.
+    """
+    # https://github.com/aio-libs/aiohttp-cors/blob/38c6c17bffc805e46baccd7be1b4fd8c69d95dc3/aiohttp_cors/urldispatcher_router_adapter.py#L187
+    resource = router.add_static(
+        "/st", pathlib.Path(aiohttp.__file__).parent, name="static"
+    )
+    resource._routes[hdrs.METH_OPTIONS] = resource._routes[hdrs.METH_GET]
+    resource._allowed_methods.add(hdrs.METH_OPTIONS)
+    mapping, allowed_methods = await resource.resolve(
+        make_mocked_request("OPTIONS", "/st/path")
+    )
+    assert mapping is not None
+    assert allowed_methods == {hdrs.METH_GET, hdrs.METH_OPTIONS, hdrs.METH_HEAD}
+
+
+async def test_add_static_set_options_route(router: web.UrlDispatcher) -> None:
+    """Ensure set_options_route works as expected."""
+    resource = router.add_static(
+        "/st", pathlib.Path(aiohttp.__file__).parent, name="static"
+    )
+
+    async def handler(request: web.Request) -> NoReturn:
+        assert False
+
+    resource.set_options_route(handler)
+    mapping, allowed_methods = await resource.resolve(
+        make_mocked_request("OPTIONS", "/st/path")
+    )
+    assert mapping is not None
+    assert allowed_methods == {hdrs.METH_GET, hdrs.METH_OPTIONS, hdrs.METH_HEAD}
+
+
+def test_dynamic_with_trailing_slash(router: web.UrlDispatcher) -> None:
     handler = make_handler()
     router.add_route("GET", "/get/{name}/", handler, name="name")
     route = router["name"]

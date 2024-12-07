@@ -62,9 +62,20 @@ The client session supports the context manager protocol for self closing.
 
 
    :param base_url: Base part of the URL (optional)
-      If set, it allows to skip the base part (https://docs.aiohttp.org) in
-      request calls. It must not include a path (as in
-      https://docs.aiohttp.org/en/stable).
+      If set, allows to join a base part to relative URLs in request calls.
+      If the URL has a path it must have a trailing ``/`` (as in
+      https://docs.aiohttp.org/en/stable/).
+
+      Note that URL joining follows :rfc:`3986`. This means, in the most
+      common case the request URLs should have no leading slash, e.g.::
+
+        session = ClientSession(base_url="http://example.com/foo/")
+
+        await session.request("GET", "bar")
+        # request for http://example.com/foo/bar
+
+        await session.request("GET", "/bar")
+        # request for http://example.com/bar
 
       .. versionadded:: 3.8
 
@@ -93,9 +104,11 @@ The client session supports the context manager protocol for self closing.
 
    :param aiohttp.BasicAuth auth: an object that represents HTTP Basic
                                   Authorization (optional). It will be included
-                                  with any request to any origin and will not be
-                                  removed, event during redirect to a different
-                                  origin.
+                                  with any request. However, if the
+                                  ``_base_url`` parameter is set, the request
+                                  URL's origin must match the base URL's origin;
+                                  otherwise, the default auth will not be
+                                  included.
 
    :param collections.abc.Callable json_serialize: Json *serializer* callable.
 
@@ -653,8 +666,8 @@ The client session supports the context manager protocol for self closing.
                               <ClientResponse>` object.
 
    .. method:: ws_connect(url, *, method='GET', \
-                            protocols=(), timeout=10.0,\
-                            receive_timeout=None,\
+                            protocols=(), \
+                            timeout=sentinel,\
                             auth=None,\
                             autoclose=True,\
                             autoping=True,\
@@ -677,12 +690,11 @@ The client session supports the context manager protocol for self closing.
 
       :param tuple protocols: Websocket protocols
 
-      :param float timeout: Timeout for websocket to close. ``10`` seconds
-                            by default
-
-      :param float receive_timeout: Timeout for websocket to receive
-                                    complete message.  ``None`` (unlimited)
-                                    seconds by default
+      :param timeout: a :class:`ClientWSTimeout` timeout for websocket.
+                      By default, the value
+                      `ClientWSTimeout(ws_receive=None, ws_close=10.0)` is used
+                      (``10.0`` seconds for the websocket to close).
+                      ``None`` means no timeout will be used.
 
       :param aiohttp.BasicAuth auth: an object that represents HTTP
                                      Basic Authorization (optional)
@@ -1475,7 +1487,7 @@ Response object
 
    .. attribute:: request_info
 
-       A namedtuple with request URL and headers from :class:`~aiohttp.ClientRequest`
+       A :class:`typing.NamedTuple` with request URL and headers from :class:`~aiohttp.ClientRequest`
        object, :class:`aiohttp.RequestInfo` instance.
 
    .. method:: get_encoding()
@@ -1617,6 +1629,32 @@ manually.
          The method is converted into :term:`coroutine`,
          *compress* parameter added.
 
+   .. method:: send_frame(message, opcode, compress=None)
+      :async:
+
+      Send a :const:`~aiohttp.WSMsgType` message *message* to peer.
+
+      This method is low-level and should be used with caution as it
+      only accepts bytes which must conform to the correct message type
+      for *message*.
+
+      It is recommended to use the :meth:`send_str`, :meth:`send_bytes`
+      or :meth:`send_json` methods instead of this method.
+
+      The primary use case for this method is to send bytes that are
+      have already been encoded without having to decode and
+      re-encode them.
+
+      :param bytes message: message to send.
+
+      :param ~aiohttp.WSMsgType opcode: opcode of the message.
+
+      :param int compress: sets specific level of compression for
+                           single message,
+                           ``None`` for not overriding per-socket setting.
+
+      .. versionadded:: 3.11
+
    .. method:: close(*, code=WSCloseCode.OK, message=b'')
       :async:
 
@@ -1655,7 +1693,7 @@ manually.
 
       :return str: peer's message content.
 
-      :raise TypeError: if message is :const:`~aiohttp.WSMsgType.BINARY`.
+      :raise aiohttp.WSMessageTypeError: if message is not :const:`~aiohttp.WSMsgType.TEXT`.
 
    .. method:: receive_bytes()
       :async:
@@ -1666,7 +1704,7 @@ manually.
 
       :return bytes: peer's message content.
 
-      :raise TypeError: if message is :const:`~aiohttp.WSMsgType.TEXT`.
+      :raise aiohttp.WSMessageTypeError: if message is not :const:`~aiohttp.WSMsgType.BINARY`.
 
    .. method:: receive_json(*, loads=json.loads)
       :async:
@@ -1727,7 +1765,24 @@ Utilities
 
       :class:`float`, ``None`` by default.
 
-   .. versionadded:: 3.3
+
+.. class:: ClientWSTimeout(*, ws_receive=None, ws_close=None)
+
+   A data class for websocket client timeout settings.
+
+   .. attribute:: ws_receive
+
+      A timeout for websocket to receive a complete message.
+
+      :class:`float`, ``None`` by default.
+
+   .. attribute:: ws_close
+
+      A timeout for the websocket to close.
+
+      :class:`float`, ``10.0`` by default.
+
+   .. versionadded:: 4.0
 
 
    .. note::
@@ -1791,7 +1846,7 @@ Utilities
 
 .. class:: RequestInfo()
 
-   A data class with request URL and headers from :class:`~aiohttp.ClientRequest`
+   A :class:`typing.NamedTuple` with request URL and headers from :class:`~aiohttp.ClientRequest`
    object, available as :attr:`ClientResponse.request_info` attribute.
 
    .. attribute:: url
@@ -2205,6 +2260,12 @@ Response errors
    Web socket server response error.
 
    Derived from :exc:`ClientResponseError`
+
+.. exception:: WSMessageTypeError
+
+   Received WebSocket message of unexpected type
+
+   Derived from :exc:`TypeError`
 
 Connection errors
 ^^^^^^^^^^^^^^^^^

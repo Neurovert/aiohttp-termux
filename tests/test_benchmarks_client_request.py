@@ -4,7 +4,7 @@ import asyncio
 from http.cookies import Morsel
 from typing import Union
 
-from pytest_codspeed import BenchmarkFixture  # type: ignore[import-untyped]
+from pytest_codspeed import BenchmarkFixture
 from yarl import URL
 
 from aiohttp.client_reqrep import ClientRequest
@@ -88,6 +88,11 @@ def test_send_client_request_one_hundred(
 
         def __init__(self) -> None:
             self.transport = MockTransport()
+            self._paused = False
+
+        @property
+        def writing_paused(self) -> bool:
+            return False
 
         async def _drain_helper(self) -> None:
             """Swallow drain."""
@@ -95,10 +100,16 @@ def test_send_client_request_one_hundred(
         def start_timeout(self) -> None:
             """Swallow start_timeout."""
 
+    class MockConnector:
+
+        def __init__(self) -> None:
+            self.force_close = False
+
     class MockConnection:
         def __init__(self) -> None:
             self.transport = None
             self.protocol = MockProtocol()
+            self._connector = MockConnector()
 
     conn = MockConnection()
 

@@ -1,6 +1,7 @@
 - Contributors -
 ----------------
 A. Jesse Jiryu Davis
+Abdur Rehman Ali
 Adam Bannister
 Adam Cooper
 Adam Horacek
@@ -128,6 +129,7 @@ Franek Magiera
 Frederik Gladhorn
 Frederik Peter Aalund
 Gabriel Tremblay
+Gang Ji
 Gary Wilson Jr.
 Gennady Andreyev
 Georges Dubus
@@ -202,6 +204,7 @@ Kevin Samuel
 Kimmo Parviainen-Jalanko
 Kirill Klenov
 Kirill Malovitsa
+Konstantin Shutkin
 Konstantin Valetov
 Krzysztof Blazewicz
 Kyrylo Perevozchikov
@@ -238,6 +241,7 @@ Matthieu Hauglustaine
 Matthieu Rigal
 Matvey Tingaev
 Meet Mangukiya
+Meshya
 Michael Ihnatenko
 Michał Górny
 Mikhail Burshteyn
@@ -299,6 +303,7 @@ Sergey Skripnick
 Serhii Charykov
 Serhii Kostel
 Serhiy Storchaka
+Shubh Agarwal
 Simon Kennedy
 Sin-Woo Bang
 Stanislas Plum

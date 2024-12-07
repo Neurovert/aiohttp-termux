@@ -1,7 +1,8 @@
 import asyncio
 import gzip
+import sys
 from socket import socket
-from typing import Any
+from typing import Any, Iterator
 from unittest import mock
 
 import pytest
@@ -10,16 +11,22 @@ from yarl import URL
 
 import aiohttp
 from aiohttp import web
+from aiohttp.pytest_plugin import AiohttpClient
 from aiohttp.test_utils import (
     AioHTTPTestCase,
     RawTestServer as _RawTestServer,
-    TestClient as _TestClient,
-    TestServer as _TestServer,
+    TestClient,
+    TestServer,
     get_port_socket,
     loop_context,
     make_mocked_request,
     unittest_run_loop,
 )
+
+if sys.version_info >= (3, 11):
+    from typing import assert_type
+
+_TestClient = TestClient[web.Request, web.Application]
 
 _hello_world_str = "Hello, world"
 _hello_world_bytes = _hello_world_str.encode("utf-8")
@@ -68,9 +75,11 @@ def app():
 
 
 @pytest.fixture
-def test_client(loop, app) -> None:
-    async def make_client():
-        return _TestClient(_TestServer(app, loop=loop), loop=loop)
+def test_client(
+    loop: asyncio.AbstractEventLoop, app: web.Application
+) -> Iterator[_TestClient]:
+    async def make_client() -> TestClient[web.Request, web.Application]:
+        return TestClient(TestServer(app))
 
     client = loop.run_until_complete(make_client())
 
@@ -82,14 +91,14 @@ def test_client(loop, app) -> None:
 def test_with_test_server_fails(loop) -> None:
     app = _create_example_app()
     with pytest.raises(TypeError):
-        with _TestServer(app, loop=loop):
+        with TestServer(app, loop=loop):
             pass
 
 
 async def test_with_client_fails(loop) -> None:
     app = _create_example_app()
     with pytest.raises(TypeError):
-        with _TestClient(_TestServer(app, loop=loop), loop=loop):
+        with _TestClient(TestServer(app, loop=loop), loop=loop):
             pass
 
 
@@ -97,7 +106,7 @@ async def test_aiohttp_client_close_is_idempotent() -> None:
     # a test client, called multiple times, should
     # not attempt to close the server again.
     app = _create_example_app()
-    client = _TestClient(_TestServer(app))
+    client = _TestClient(TestServer(app))
     await client.close()
     await client.close()
 
@@ -253,12 +262,14 @@ def test_make_mocked_request_transport() -> None:
 
 async def test_test_client_props(loop) -> None:
     app = _create_example_app()
-    client = _TestClient(_TestServer(app, host="127.0.0.1", loop=loop), loop=loop)
+    client = _TestClient(TestServer(app, host="127.0.0.1", loop=loop), loop=loop)
     assert client.host == "127.0.0.1"
     assert client.port is None
     async with client:
         assert isinstance(client.port, int)
         assert client.server is not None
+        if sys.version_info >= (3, 11):
+            assert_type(client.app, web.Application)
         assert client.app is not None
     assert client.port is None
 
@@ -273,13 +284,15 @@ async def test_test_client_raw_server_props(loop) -> None:
     async with client:
         assert isinstance(client.port, int)
         assert client.server is not None
+        if sys.version_info >= (3, 11):
+            assert_type(client.app, None)
         assert client.app is None
     assert client.port is None
 
 
 async def test_test_server_context_manager(loop) -> None:
     app = _create_example_app()
-    async with _TestServer(app, loop=loop) as server:
+    async with TestServer(app, loop=loop) as server:
         client = aiohttp.ClientSession(loop=loop)
         resp = await client.head(server.make_url("/"))
         assert resp.status == 200
@@ -289,7 +302,7 @@ async def test_test_server_context_manager(loop) -> None:
 
 def test_client_unsupported_arg() -> None:
     with pytest.raises(TypeError) as e:
-        _TestClient("string")
+        TestClient("string")  # type: ignore[call-overload]
 
     assert (
         str(e.value) == "server must be TestServer instance, found type: <class 'str'>"
@@ -298,7 +311,7 @@ def test_client_unsupported_arg() -> None:
 
 async def test_server_make_url_yarl_compatibility(loop) -> None:
     app = _create_example_app()
-    async with _TestServer(app, loop=loop) as server:
+    async with TestServer(app, loop=loop) as server:
         make_url = server.make_url
         assert make_url(URL("/foo")) == make_url("/foo")
         with pytest.raises(AssertionError):
@@ -322,8 +335,29 @@ def test_testcase_no_app(testdir, loop) -> None:
     result.stdout.fnmatch_lines(["*RuntimeError*"])
 
 
+async def test_disable_retry_persistent_connection(
+    aiohttp_client: AiohttpClient,
+) -> None:
+    num_requests = 0
+
+    async def handler(request: web.Request) -> web.Response:
+        nonlocal num_requests
+
+        num_requests += 1
+        request.protocol.force_close()
+        return web.Response()
+
+    app = web.Application()
+    app.router.add_get("/", handler)
+    client = await aiohttp_client(app)
+    with pytest.raises(aiohttp.ServerDisconnectedError):
+        await client.get("/")
+
+    assert num_requests == 1
+
+
 async def test_server_context_manager(app, loop) -> None:
-    async with _TestServer(app, loop=loop) as server:
+    async with TestServer(app, loop=loop) as server:
         async with aiohttp.ClientSession(loop=loop) as client:
             async with client.head(server.make_url("/")) as resp:
                 assert resp.status == 200
@@ -333,7 +367,7 @@ async def test_server_context_manager(app, loop) -> None:
     "method", ["head", "get", "post", "options", "post", "put", "patch", "delete"]
 )
 async def test_client_context_manager_response(method, app, loop) -> None:
-    async with _TestClient(_TestServer(app), loop=loop) as client:
+    async with _TestClient(TestServer(app), loop=loop) as client:
         async with getattr(client, method)("/") as resp:
             assert resp.status == 200
             if method != "head":
@@ -349,7 +383,7 @@ async def test_custom_port(
     sock = unused_port_socket
     port = sock.getsockname()[1]
     client = _TestClient(
-        _TestServer(app, port=port, socket_factory=lambda *args, **kwargs: sock)
+        TestServer(app, port=port, socket_factory=lambda *args, **kwargs: sock)
     )
     await client.start_server()
 
@@ -363,7 +397,7 @@ async def test_custom_port(
     await client.close()
 
 
-@pytest.mark.parametrize("test_server_cls", [_TestServer, _RawTestServer])
+@pytest.mark.parametrize("test_server_cls", [TestServer, _RawTestServer])
 async def test_base_test_server_socket_factory(
     test_server_cls: type, app: Any, loop: Any
 ) -> None:
@@ -387,7 +421,7 @@ async def test_base_test_server_socket_factory(
 )
 async def test_test_server_hostnames(hostname, expected_host, loop) -> None:
     app = _create_example_app()
-    server = _TestServer(app, host=hostname, loop=loop)
+    server = TestServer(app, host=hostname, loop=loop)
     async with server:
         pass
     assert server.host == expected_host

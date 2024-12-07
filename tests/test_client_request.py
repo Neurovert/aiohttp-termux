@@ -6,7 +6,7 @@ import sys
 import urllib.parse
 import zlib
 from http.cookies import BaseCookie, Morsel, SimpleCookie
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 from unittest import mock
 
 import pytest
@@ -14,7 +14,7 @@ from multidict import CIMultiDict, CIMultiDictProxy, istr
 from yarl import URL
 
 import aiohttp
-from aiohttp import BaseConnector, client_reqrep, hdrs, helpers, payload
+from aiohttp import BaseConnector, hdrs, helpers, payload
 from aiohttp.client_exceptions import ClientConnectionError
 from aiohttp.client_reqrep import (
     ClientRequest,
@@ -23,7 +23,7 @@ from aiohttp.client_reqrep import (
     _gen_default_accept_encoding,
     _merge_ssl_params,
 )
-from aiohttp.http import HttpVersion
+from aiohttp.http import HttpVersion10, HttpVersion11
 from aiohttp.test_utils import make_mocked_coro
 
 
@@ -67,17 +67,18 @@ def protocol(loop, transport):
 
 
 @pytest.fixture
-def transport(buf):
-    transport = mock.Mock()
+def transport(buf: bytearray) -> mock.Mock:
+    transport = mock.create_autospec(asyncio.Transport, spec_set=True, instance=True)
 
     def write(chunk):
         buf.extend(chunk)
 
-    async def write_eof():
-        pass
+    def writelines(chunks: Iterable[bytes]) -> None:
+        for chunk in chunks:
+            buf.extend(chunk)
 
     transport.write.side_effect = write
-    transport.write_eof.side_effect = write_eof
+    transport.writelines.side_effect = writelines
     transport.is_closing.return_value = False
 
     return transport
@@ -121,7 +122,7 @@ def test_version_default(make_request) -> None:
 def test_request_info(make_request) -> None:
     req = make_request("get", "http://python.org/")
     assert req.request_info == aiohttp.RequestInfo(
-        URL("http://python.org/"), "GET", req.headers
+        URL("http://python.org/"), "GET", req.headers, URL("http://python.org/")
     )
 
 
@@ -138,30 +139,6 @@ def test_request_info_with_fragment(make_request) -> None:
 def test_version_err(make_request) -> None:
     with pytest.raises(ValueError):
         make_request("get", "http://python.org/", version="1.c")
-
-
-def test_keep_alive(make_request) -> None:
-    req = make_request("get", "http://python.org/", version=(0, 9))
-    assert not req.keep_alive()
-
-    req = make_request("get", "http://python.org/", version=(1, 0))
-    assert not req.keep_alive()
-
-    req = make_request(
-        "get",
-        "http://python.org/",
-        version=(1, 0),
-        headers={"connection": "keep-alive"},
-    )
-    assert req.keep_alive()
-
-    req = make_request("get", "http://python.org/", version=(1, 1))
-    assert req.keep_alive()
-
-    req = make_request(
-        "get", "http://python.org/", version=(1, 1), headers={"connection": "close"}
-    )
-    assert not req.keep_alive()
 
 
 def test_host_port_default_http(make_request) -> None:
@@ -280,16 +257,9 @@ def test_host_header_ipv4(make_request) -> None:
     assert req.headers["HOST"] == "127.0.0.2"
 
 
-@pytest.mark.parametrize("yarl_supports_host_subcomponent", [True, False])
-def test_host_header_ipv6(make_request, yarl_supports_host_subcomponent: bool) -> None:
-    # Ensure the old path is tested for old yarl versions
-    with mock.patch.object(
-        client_reqrep,
-        "_YARL_SUPPORTS_HOST_SUBCOMPONENT",
-        yarl_supports_host_subcomponent,
-    ):
-        req = make_request("get", "http://[::2]")
-        assert req.headers["HOST"] == "[::2]"
+def test_host_header_ipv6(make_request) -> None:
+    req = make_request("get", "http://[::2]")
+    assert req.headers["HOST"] == "[::2]"
 
 
 def test_host_header_ipv4_with_port(make_request) -> None:
@@ -634,32 +604,40 @@ def test_gen_netloc_no_port(make_request) -> None:
     )
 
 
-async def test_connection_header(loop, conn) -> None:
+async def test_connection_header(
+    loop: asyncio.AbstractEventLoop, conn: mock.Mock
+) -> None:
     req = ClientRequest("get", URL("http://python.org"), loop=loop)
-    req.keep_alive = mock.Mock()
     req.headers.clear()
 
-    req.keep_alive.return_value = True
-    req.version = HttpVersion(1, 1)
+    req.version = HttpVersion11
     req.headers.clear()
-    await req.send(conn)
+    with mock.patch.object(conn._connector, "force_close", False):
+        await req.send(conn)
     assert req.headers.get("CONNECTION") is None
 
-    req.version = HttpVersion(1, 0)
+    req.version = HttpVersion10
     req.headers.clear()
-    await req.send(conn)
+    with mock.patch.object(conn._connector, "force_close", False):
+        await req.send(conn)
     assert req.headers.get("CONNECTION") == "keep-alive"
 
-    req.keep_alive.return_value = False
-    req.version = HttpVersion(1, 1)
+    req.version = HttpVersion11
     req.headers.clear()
-    await req.send(conn)
+    with mock.patch.object(conn._connector, "force_close", True):
+        await req.send(conn)
     assert req.headers.get("CONNECTION") == "close"
 
-    await req.close()
+    req.version = HttpVersion10
+    req.headers.clear()
+    with mock.patch.object(conn._connector, "force_close", True):
+        await req.send(conn)
+    assert not req.headers.get("CONNECTION")
 
 
-async def test_no_content_length(loop, conn) -> None:
+async def test_no_content_length(
+    loop: asyncio.AbstractEventLoop, conn: mock.Mock
+) -> None:
     req = ClientRequest("get", URL("http://python.org"), loop=loop)
     resp = await req.send(conn)
     assert req.headers.get("CONTENT-LENGTH") is None
@@ -709,6 +687,7 @@ async def test_content_type_skip_auto_header_bytes(loop, conn) -> None:
         skip_auto_headers={"Content-Type"},
         loop=loop,
     )
+    assert req.skip_auto_headers == CIMultiDict({"CONTENT-TYPE": None})
     resp = await req.send(conn)
     assert "CONTENT-TYPE" not in req.headers
     resp.close()
@@ -1498,3 +1477,46 @@ async def test_connection_key_without_proxy() -> None:
     )
     assert req.connection_key.proxy_headers_hash is None
     await req.close()
+
+
+def test_request_info_back_compat() -> None:
+    """Test RequestInfo can be created without real_url."""
+    url = URL("http://example.com")
+    other_url = URL("http://example.org")
+    assert (
+        aiohttp.RequestInfo(
+            url=url, method="GET", headers=CIMultiDictProxy(CIMultiDict())
+        ).real_url
+        is url
+    )
+    assert (
+        aiohttp.RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict())).real_url is url
+    )
+    assert (
+        aiohttp.RequestInfo(
+            url, "GET", CIMultiDictProxy(CIMultiDict()), real_url=url
+        ).real_url
+        is url
+    )
+    assert (
+        aiohttp.RequestInfo(
+            url, "GET", CIMultiDictProxy(CIMultiDict()), real_url=other_url
+        ).real_url
+        is other_url
+    )
+
+
+def test_request_info_tuple_new() -> None:
+    """Test RequestInfo must be created with real_url using tuple.__new__."""
+    url = URL("http://example.com")
+    with pytest.raises(IndexError):
+        tuple.__new__(
+            aiohttp.RequestInfo, (url, "GET", CIMultiDictProxy(CIMultiDict()))
+        ).real_url
+
+    assert (
+        tuple.__new__(
+            aiohttp.RequestInfo, (url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+        ).real_url
+        is url
+    )

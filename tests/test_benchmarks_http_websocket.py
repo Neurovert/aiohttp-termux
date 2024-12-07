@@ -3,25 +3,19 @@
 import asyncio
 from typing import Union
 
-from pytest_codspeed import BenchmarkFixture  # type: ignore[import-untyped]
+from pytest_codspeed import BenchmarkFixture
 
-from aiohttp import DataQueue
+from aiohttp._websocket.helpers import MSG_SIZE, PACK_LEN3
+from aiohttp._websocket.reader import WebSocketDataQueue
 from aiohttp.base_protocol import BaseProtocol
-from aiohttp.http_websocket import (
-    MSG_SIZE,
-    PACK_LEN3,
-    WebSocketReader,
-    WebSocketWriter,
-    WSMessage,
-    WSMsgType,
-)
+from aiohttp.http_websocket import WebSocketReader, WebSocketWriter, WSMsgType
 
 
 def test_read_large_binary_websocket_messages(
     loop: asyncio.AbstractEventLoop, benchmark: BenchmarkFixture
 ) -> None:
     """Read one hundred large binary websocket messages."""
-    queue: DataQueue[WSMessage] = DataQueue(loop=loop)
+    queue = WebSocketDataQueue(BaseProtocol(loop), 2**16, loop=loop)
     reader = WebSocketReader(queue, max_msg_size=2**18)
 
     # PACK3 has a minimum message length of 2**16 bytes.
@@ -42,7 +36,7 @@ def test_read_one_hundred_websocket_text_messages(
     loop: asyncio.AbstractEventLoop, benchmark: BenchmarkFixture
 ) -> None:
     """Benchmark reading 100 WebSocket text messages."""
-    queue: DataQueue[WSMessage] = DataQueue(loop=loop)
+    queue = WebSocketDataQueue(BaseProtocol(loop), 2**16, loop=loop)
     reader = WebSocketReader(queue, max_msg_size=2**16)
     raw_message = (
         b'\x81~\x01!{"id":1,"src":"shellyplugus-c049ef8c30e4","dst":"aios-1453812500'
@@ -84,7 +78,7 @@ def test_send_one_hundred_websocket_text_messages(
 
     async def _send_one_hundred_websocket_text_messages() -> None:
         for _ in range(100):
-            await writer._send_frame(raw_message, WSMsgType.TEXT)
+            await writer.send_frame(raw_message, WSMsgType.TEXT)
 
     @benchmark
     def _run() -> None:
@@ -100,7 +94,7 @@ def test_send_one_hundred_large_websocket_text_messages(
 
     async def _send_one_hundred_websocket_text_messages() -> None:
         for _ in range(100):
-            await writer._send_frame(raw_message, WSMsgType.TEXT)
+            await writer.send_frame(raw_message, WSMsgType.TEXT)
 
     @benchmark
     def _run() -> None:
@@ -116,7 +110,7 @@ def test_send_one_hundred_websocket_text_messages_with_mask(
 
     async def _send_one_hundred_websocket_text_messages() -> None:
         for _ in range(100):
-            await writer._send_frame(raw_message, WSMsgType.TEXT)
+            await writer.send_frame(raw_message, WSMsgType.TEXT)
 
     @benchmark
     def _run() -> None:
@@ -132,7 +126,7 @@ def test_send_one_hundred_websocket_compressed_messages(
 
     async def _send_one_hundred_websocket_compressed_messages() -> None:
         for _ in range(100):
-            await writer._send_frame(raw_message, WSMsgType.BINARY)
+            await writer.send_frame(raw_message, WSMsgType.BINARY)
 
     @benchmark
     def _run() -> None:
